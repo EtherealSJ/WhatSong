@@ -114,10 +114,11 @@ class WhatsAppSyncService : NotificationListenerService() {
 
         if (!text.startsWith("SYNC|")) return
 
-        val parts = text.split("|")
+                val parts = text.split("|")
         if (parts.size < 5) return
 
-        val senderId = parts[1]
+        // Corrección de índices para que apunten a Strings y Longs reales
+        val senderId = parts[1] // <- String
         if (senderId == deviceId) return
 
         if (text == lastProcessedPacket) return
@@ -125,10 +126,11 @@ class WhatsAppSyncService : NotificationListenerService() {
 
         cancelNotification(sbn.key)
 
-        val cmd = parts[2]
-        val posMs = parts[3].toLongOrNull() ?: 0L
-        val sentTime = parts[4].toLongOrNull() ?: 0L
+        val cmd = parts[2] // <- String
+        val posMs = parts[3].toLongOrNull() ?: 0L // <- Long
+        val sentTime = parts[4].toLongOrNull() ?: 0L // <- Long
         val now = System.currentTimeMillis()
+
 
         when (cmd) {
             "PING" -> {
