@@ -262,10 +262,21 @@ class MainActivity : Activity() {
                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {}
                 override fun onStartTrackingTouch(sb: SeekBar?) {}
                 override fun onStopTrackingTouch(sb: SeekBar?) {
-                    val pos = (sb?.progress ?: 0).toLong()
-                    seekLocalOrExternal(pos)
-                    WhatsAppSyncService.sendWhatsAppPayload(this@MainActivity, "SEEK", pos)
-                }
+    val progress = sb?.progress ?: 0
+    val duration = if (useExternalPlayer) {
+        // Intenta obtener la duración desde los metadatos externos si están disponibles
+        activeController?.metadata?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+    } else {
+        mediaPlayer?.duration?.toLong() ?: 0L
+    }
+
+    if (duration > 0) {
+        val pos = (progress.toDouble() / 1000.0 * duration).toLong()
+        seekLocalOrExternal(pos)
+        WhatsAppSyncService.sendWhatsAppPayload(this@MainActivity, "SEEK", pos)
+    }
+}
+
             })
         }
         root.addView(seekBar)
@@ -393,15 +404,24 @@ class MainActivity : Activity() {
         uiHandler.post(object : Runnable {
             override fun run() {
                 if (!useExternalPlayer && isLocalPrepared) {
-                    val dur = mediaPlayer?.duration ?: 1
-                    val cur = mediaPlayer?.currentPosition ?: 0
-                    seekBar.max = dur
-                    seekBar.progress = cur
-                    tvSongStatus.text = "Reproductor Local: ${cur / 1000}s / ${dur / 1000}s"
-                } else if (useExternalPlayer) {
-                    val pos = activeController?.playbackState?.position ?: 0L
-                    tvSongStatus.text = "Reproductor Externo: ${pos / 1000}s"
-                }
+    val dur = mediaPlayer?.duration ?: 1
+    val cur = mediaPlayer?.currentPosition ?: 0
+    seekBar.max = 1000
+    seekBar.progress = ((cur.toDouble() / dur.toDouble()) * 1000).toInt()
+    tvSongStatus.text = "Reproductor Local: ${cur / 1000}s / ${dur / 1000}s"
+} else if (useExternalPlayer) {
+    attachExternalMediaSession()
+    val pos = activeController?.playbackState?.position ?: 0L
+    val dur = activeController?.metadata?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+    if (dur > 0) {
+        seekBar.max = 1000
+        seekBar.progress = ((pos.toDouble() / dur.toDouble()) * 1000).toInt()
+        tvSongStatus.text = "Reproductor Externo: ${pos / 1000}s / ${dur / 1000}s"
+    } else {
+        tvSongStatus.text = "Reproductor Externo: ${pos / 1000}s"
+    }
+}
+
                 uiHandler.postDelayed(this, 500)
             }
         })
