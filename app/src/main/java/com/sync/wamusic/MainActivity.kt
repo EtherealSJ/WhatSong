@@ -1,20 +1,30 @@
 package com.sync.wamusic
 
-import android.app.*
-import android.content.*
+import android.app.Activity
+import android.app.Notification
+import android.app.RemoteInput
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.media.MediaPlayer
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.media.session.PlaybackState
 import android.net.Uri
-import android.os.*
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.view.Gravity
-import android.widget.*
-import kotlin.math.abs
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.SeekBar
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
 
 class WhatsAppSyncService : NotificationListenerService() {
 
@@ -28,9 +38,16 @@ class WhatsAppSyncService : NotificationListenerService() {
         var onCommandReceived: ((cmd: String, posMs: Long, transitMs: Long) -> Unit)? = null
         var onTunnelUpdated: (() -> Unit)? = null
 
-        fun sendWhatsAppPayload(context: Context, cmd: String, posMs: Long, extraTime: Long = System.currentTimeMillis()): Boolean {
+        fun sendWhatsAppPayload(
+            context: Context,
+            cmd: String,
+            posMs: Long,
+            extraTime: Long = System.currentTimeMillis()
+        ): Boolean {
             val action = replyAction ?: return false
             val remoteInputs = action.remoteInputs ?: return false
+            if (remoteInputs.isEmpty()) return false
+
             val payload = "SYNC|$deviceId|$cmd|$posMs|$extraTime"
 
             val intent = Intent().addFlags(Intent.FLAG_RECEIVER_FOREGROUND)
@@ -60,19 +77,35 @@ class WhatsAppSyncService : NotificationListenerService() {
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "Contacto"
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: return
 
-        // Buscar accion RemoteInput (boton Responder de WhatsApp)
-        val allActions = mutableListOf<Notification.Action>()
-        notif.actions?.let { allActions.addAll(it) }
-        allActions.addAll(Notification.WearableExtender(notif).actions)
+        val allActions = ArrayList<Notification.Action>()
+        val directActions = notif.actions
+        if (directActions != null) {
+            for (act in directActions) {
+                allActions.add(act)
+            }
+        }
+        val wearableActions = Notification.WearableExtender(notif).actions
+        if (wearableActions != null) {
+            for (act in wearableActions) {
+                allActions.add(act)
+            }
+        }
 
-        val foundReply = allActions.firstOrNull { !it.remoteInputs.isNullOrEmpty() }
+        var foundReply: Notification.Action? = null
+        for (act in allActions) {
+            val inputs = act.remoteInputs
+            if (inputs != null && inputs.isNotEmpty()) {
+                foundReply = act
+                break
+            }
+        }
+
         if (foundReply != null) {
             replyAction = foundReply
             lastSenderTitle = title
             onTunnelUpdated?.invoke()
         }
 
-        // Handshake rapido escribiendo !sync en el chat
         if (text.trim().equals("!sync", ignoreCase = true)) {
             cancelNotification(sbn.key)
             sendWhatsAppPayload(applicationContext, "PING", 0L, System.currentTimeMillis())
@@ -85,14 +118,11 @@ class WhatsAppSyncService : NotificationListenerService() {
         if (parts.size < 5) return
 
         val senderId = parts[1]
-        // Ignorar eco de nuestros propios mensajes
         if (senderId == deviceId) return
 
-        // Evitar procesar dos veces la misma notificacion
         if (text == lastProcessedPacket) return
         lastProcessedPacket = text
 
-        // Borrar notificacion silenciosamente para que no moleste
         cancelNotification(sbn.key)
 
         val cmd = parts[2]
@@ -102,12 +132,11 @@ class WhatsAppSyncService : NotificationListenerService() {
 
         when (cmd) {
             "PING" -> {
-                // Respondemos PONG enviando el tiempo original y nuestro tiempo de recepcion
                 sendWhatsAppPayload(applicationContext, "PONG", sentTime, now)
             }
             "PONG" -> {
-                // posMs trae t1 (cuando enviamos PING) y sentTime trae t2 (reloj del amigo)
-                val rtt = (now - posMs).coerceAtLeast(50L)
+                val rawRtt = now - posMs
+                val rtt = if (rawRtt < 50L) 50L else rawRtt
                 lastRttMs = rtt
                 val oneWay = rtt / 2L
                 clockOffsetMs = sentTime - (posMs + oneWay)
@@ -162,7 +191,7 @@ class MainActivity : Activity() {
         }
 
         val title = TextView(this).apply {
-            text = "WA Music Sync P2P"
+            text = "WhatSong Sync P2P"
             textSize = 22f
             setTextColor(Color.WHITE)
             setPadding(0, 0, 0, 24)
@@ -189,11 +218,8 @@ class MainActivity : Activity() {
             text = "2. Calibrar Reloj / Latencia (PING)"
             setOnClickListener {
                 val ok = WhatsAppSyncService.sendWhatsAppPayload(this@MainActivity, "PING", 0L)
-                Toast.makeText(
-                    this@MainActivity,
-                    if (ok) "PING enviado por WhatsApp" else "Aún no llega notificación de WhatsApp",
-                    Toast.LENGTH_SHORT
-                ).show()
+                val msg = if (ok) "PING enviado por WhatsApp" else "Aún no llega notificación de WhatsApp"
+                Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
             }
         }
         root.addView(btnPing)
@@ -251,7 +277,7 @@ class MainActivity : Activity() {
         }
 
         val btnPlay = Button(this).apply {
-            text = "▶ PLAY SYNC"
+            text = "PLAY SYNC"
             setOnClickListener {
                 val pos = getCurrentPositionMs()
                 playLocalOrExternal(pos)
@@ -260,7 +286,7 @@ class MainActivity : Activity() {
         }
 
         val btnPause = Button(this).apply {
-            text = "⏸ PAUSE SYNC"
+            text = "PAUSE SYNC"
             setOnClickListener {
                 val pos = getCurrentPositionMs()
                 pauseLocalOrExternal(pos)
@@ -306,7 +332,7 @@ class MainActivity : Activity() {
             val cn = ComponentName(this, WhatsAppSyncService::class.java)
             val controllers = msm.getActiveSessions(cn)
             activeController?.unregisterCallback(externalCallback)
-            activeController = controllers.firstOrNull()
+            activeController = if (controllers.isNotEmpty()) controllers[0] else null
             activeController?.registerCallback(externalCallback)
         } catch (e: SecurityException) {
             Toast.makeText(this, "Activa primero el permiso de Notificaciones", Toast.LENGTH_SHORT).show()
@@ -357,7 +383,7 @@ class MainActivity : Activity() {
         val connected = WhatsAppSyncService.replyAction != null
         tvTunnelStatus.text = if (connected) {
             "Túnel Activo con: ${WhatsAppSyncService.lastSenderTitle}\n" +
-            "RTT: ${WhatsAppSyncService.lastRttMs} ms | Offset Reloj: ${WhatsAppSyncService.clockOffsetMs} ms"
+                "RTT: ${WhatsAppSyncService.lastRttMs} ms | Offset Reloj: ${WhatsAppSyncService.clockOffsetMs} ms"
         } else {
             "Túnel WhatsApp: Esperando mensaje...\n(Tu amigo debe enviarte !sync por WhatsApp)"
         }
