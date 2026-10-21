@@ -407,9 +407,9 @@ class MainActivity : Activity() {
         })
     }
 
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 101 && resultCode == RESULT_OK) {
+        if (requestCode == 101 && resultCode == Activity.RESULT_OK) {
             val uri: Uri = data?.data ?: return
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer().apply {
@@ -420,4 +420,4 @@ class MainActivity : Activity() {
             tvSongStatus.text = "Audio local cargado y listo"
         }
     }
-}
+
