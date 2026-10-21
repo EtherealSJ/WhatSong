@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+
     <application
-        android:label="WA Music Sync"
+        android:label="Radio Sync"
+        android:requestLegacyExternalStorage="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
         <activity
@@ -15,8 +20,21 @@
         </activity>
 
         <service
-            android:name=".WhatsAppSyncService"
-            android:label="WA Music Sync Tunnel"
+            android:name=".WhatsAppChatService"
+            android:label="Radio Sync (Lector de Chat)"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+
+        <service
+            android:name=".WhatsAppNotifService"
+            android:label="Radio Sync (Segundo Plano)"
             android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
             android:exported="true">
             <intent-filter>
