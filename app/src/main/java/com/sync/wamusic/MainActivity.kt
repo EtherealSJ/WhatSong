@@ -332,7 +332,7 @@ class MainActivity : Activity() {
             val cn = ComponentName(this, WhatsAppSyncService::class.java)
             val controllers = msm.getActiveSessions(cn)
             activeController?.unregisterCallback(externalCallback)
-            activeController = if (controllers.isNotEmpty()) controllers[0] else null
+            activeController = if (!controllers.isNullOrEmpty()) controllers[0] else null
             activeController?.registerCallback(externalCallback)
         } catch (e: SecurityException) {
             Toast.makeText(this, "Activa primero el permiso de Notificaciones", Toast.LENGTH_SHORT).show()
@@ -407,7 +407,7 @@ class MainActivity : Activity() {
         })
     }
 
-        override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == 101 && resultCode == Activity.RESULT_OK) {
             val uri: Uri = data?.data ?: return
