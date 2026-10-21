@@ -119,7 +119,8 @@ class WhatsAppSyncService : NotificationListenerService() {
 
         // Corregido: Se añade el índice [1] para obtener el ID del emisor como String
         val senderId = parts[1]
-        if (senderId == deviceId) return
+        if (senderId.toString() == deviceId.toString()) return
+
 
         if (text == lastProcessedPacket) return
         lastProcessedPacket = text
