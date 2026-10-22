@@ -22,6 +22,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.io.File
@@ -29,46 +30,50 @@ import java.io.File
 object MusicEngine {
     private var player: MediaPlayer? = null
     private var currentFilePath: String = ""
-    var lastExecutedState: String = ""
-    var lastFileName: String = "Ninguno todavía"
+    var lastExecutedMsgId: String = "" // Evita que se repita al entrar y salir del chat
+    var lastCommandText: String = "Ninguno"
+    var lastFileName: String = "Ningún audio seleccionado"
     var onUiUpdate: (() -> Unit)? = null
 
-    fun processChatCommand(context: Context, rawCmd: String) {
+    fun isPlaying(): Boolean = player?.isPlaying == true
+
+    fun getCurrentPositionMs(): Int = player?.currentPosition ?: 0
+
+    fun getDurationMs(): Int = player?.duration ?: 1
+
+    fun processChatCommand(context: Context, msgId: String, rawCmd: String) {
         val clean = rawCmd.trim().lowercase()
         if (!clean.startsWith("!")) return
 
-        // Evitar que el mismo comando en pantalla se ejecute repetidas veces al hacer scroll
-        if (clean == lastExecutedState) return
+        // Si este mensaje exacto ya se ejecutó antes, lo ignoramos por completo
+        if (msgId == lastExecutedMsgId && msgId.isNotEmpty()) return
+        lastExecutedMsgId = msgId
+        lastCommandText = clean
 
         when {
             clean == "!play" || clean == "!continuar" -> {
-                lastExecutedState = clean
                 ensureLatestAudioLoaded(context, false)
                 player?.start()
                 showToast(context, "Radio Sync: ▶ PLAY")
             }
             clean == "!reiniciar" -> {
-                lastExecutedState = clean
                 ensureLatestAudioLoaded(context, true)
                 player?.seekTo(0)
                 player?.start()
                 showToast(context, "Radio Sync: ⏮ Reiniciando canción")
             }
             clean == "!pausa" || clean == "!pause" -> {
-                lastExecutedState = clean
                 if (player?.isPlaying == true) {
                     player?.pause()
                     showToast(context, "Radio Sync: ⏸ PAUSA")
                 }
             }
             clean == "!stop" -> {
-                lastExecutedState = clean
                 player?.pause()
                 player?.seekTo(0)
                 showToast(context, "Radio Sync: ⏹ STOP")
             }
             clean.startsWith("!ir ") -> {
-                lastExecutedState = clean
                 val timePart = clean.removePrefix("!ir ").trim()
                 val targetMs = parseTimeMs(timePart)
                 ensureLatestAudioLoaded(context, false)
@@ -77,6 +82,24 @@ object MusicEngine {
                 showToast(context, "Radio Sync: ⏩ Saltando a ${targetMs / 1000}s")
             }
         }
+        onUiUpdate?.invoke()
+    }
+
+    fun manualPlay(context: Context) {
+        ensureLatestAudioLoaded(context, false)
+        player?.start()
+        onUiUpdate?.invoke()
+    }
+
+    fun manualPause() {
+        if (player?.isPlaying == true) {
+            player?.pause()
+        }
+        onUiUpdate?.invoke()
+    }
+
+    fun manualSeek(posMs: Int) {
+        player?.seekTo(posMs)
         onUiUpdate?.invoke()
     }
 
@@ -98,14 +121,9 @@ object MusicEngine {
 
     fun ensureLatestAudioLoaded(context: Context, forceReload: Boolean) {
         val latestFile = findNewestWhatsAppAudio()
-        if (latestFile == null) {
-            showToast(context, "No se encontró audio en WhatsApp. Descárgalo en el chat.")
-            return
-        }
+        if (latestFile == null) return
 
-        if (!forceReload && latestFile.absolutePath == currentFilePath && player != null) {
-            return
-        }
+        if (!forceReload && latestFile.absolutePath == currentFilePath && player != null) return
 
         try {
             player?.release()
@@ -117,7 +135,7 @@ object MusicEngine {
             lastFileName = latestFile.name
             onUiUpdate?.invoke()
         } catch (e: Exception) {
-            showToast(context, "Error al cargar audio: ${latestFile.name}")
+            // Ignorar errores de lectura momentáneos
         }
     }
 
@@ -162,46 +180,37 @@ object MusicEngine {
 }
 
 class WhatsAppChatService : AccessibilityService() {
-
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val root = rootInActiveWindow ?: return
-        val texts = ArrayList<String>()
-        collectScreenTexts(root, texts)
+        val nodes = ArrayList<AccessibilityNodeInfo>()
+        collectAllNodes(root, nodes)
 
         // Verificar que estamos viendo el grupo "Radio Sync"
-        val inRadioSync = texts.any { it.lowercase().contains("radio sync") }
+        val inRadioSync = nodes.any { it.text?.toString()?.lowercase()?.contains("radio sync") == true }
         if (!inRadioSync) return
 
-        // Buscar el ultimo comando escrito abajo del todo en el chat
-        var latestCmd: String? = null
-        for (t in texts) {
-            val clean = t.trim().lowercase()
-            if (clean == "!play" || clean == "!pausa" || clean == "!pause" ||
-                clean == "!reiniciar" || clean == "!continuar" ||
-                clean == "!stop" || clean.startsWith("!ir ")
+        // Buscar mensajes que sean comandos válidos
+        for (node in nodes) {
+            val txt = node.text?.toString()?.trim() ?: continue
+            val lower = txt.lowercase()
+            if (lower == "!play" || lower == "!pausa" || lower == "!pause" ||
+                lower == "!reiniciar" || lower == "!continuar" ||
+                lower == "!stop" || lower.startsWith("!ir ")
             ) {
-                latestCmd = clean
+                // Usamos el texto completo del nodo como identificador único para evitar que se repita
+                val uniqueMsgId = txt + "_" + (node.windowId)
+                MusicEngine.processChatCommand(applicationContext, uniqueMsgId, lower)
+                break
             }
-        }
-
-        if (latestCmd != null) {
-            MusicEngine.processChatCommand(applicationContext, latestCmd)
         }
     }
 
-    private fun collectScreenTexts(node: AccessibilityNodeInfo?, out: MutableList<String>) {
+    private fun collectAllNodes(node: AccessibilityNodeInfo?, out: MutableList<AccessibilityNodeInfo>) {
         if (node == null) return
-        // Ignorar la caja de texto donde escribes para que no se active antes de presionar Enviar
-        if (node.isEditable) return
-
-        val txt = node.text?.toString()
-        if (!txt.isNullOrBlank()) {
-            out.add(txt)
-        }
-
+        out.add(node)
         val count = node.childCount
         for (i in 0 until count) {
-            collectScreenTexts(node.getChild(i), out)
+            collectAllNodes(node.getChild(i), out)
         }
     }
 
@@ -222,7 +231,8 @@ class WhatsAppNotifService : NotificationListenerService() {
         if ("$title $conv".lowercase().contains("radio sync")) {
             val clean = text.trim().lowercase()
             if (clean.startsWith("!")) {
-                MusicEngine.processChatCommand(applicationContext, clean)
+                val uniqueId = clean + "_" + sbn.postTime
+                MusicEngine.processChatCommand(applicationContext, uniqueId, clean)
             }
         }
     }
@@ -231,78 +241,132 @@ class WhatsAppNotifService : NotificationListenerService() {
 class MainActivity : Activity() {
 
     private lateinit var tvInfo: TextView
+    private lateinit var tvTrack: TextView
+    private lateinit var seekBar: SeekBar
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 64, 48, 48)
+            setPadding(48, 48, 48, 48)
             setBackgroundColor(Color.parseColor("#0F172A"))
             gravity = Gravity.CENTER_HORIZONTAL
         }
 
         val title = TextView(this).apply {
-            text = "Radio Sync Automático"
+            text = "Radio Sync Control Panel"
             textSize = 22f
             setTextColor(Color.WHITE)
-            setPadding(0, 0, 0, 24)
+            setPadding(0, 0, 0, 16)
         }
         root.addView(title)
 
+        tvTrack = TextView(this).apply {
+            text = "🎵 ${MusicEngine.lastFileName}"
+            textSize = 15f
+            setTextColor(Color.parseColor("#38BDF8"))
+            setPadding(0, 0, 0, 16)
+        }
+        root.addView(tvTrack)
+
+        seekBar = SeekBar(this).apply {
+            max = 1000
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {}
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {
+                    if (fromUser) {
+                        val target = (s?.progress ?: 0)
+                        MusicEngine.manualSeek(target)
+                    }
+                }
+            })
+        }
+        root.addView(seekBar)
+
+        val controlsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 16, 0, 24)
+        }
+
+        val btnPlay = Button(this).apply {
+            text = "▶ PLAY"
+            setOnClickListener { MusicEngine.manualPlay(this@MainActivity) }
+        }
+        val btnPause = Button(this).apply {
+            text = "⏸ PAUSA"
+            setOnClickListener { MusicEngine.manualPause() }
+        }
+        controlsRow.addView(btnPlay)
+        controlsRow.addView(btnPause)
+        root.addView(controlsRow)
+
         val instructions = TextView(this).apply {
-            text = "Activa estos 3 permisos una sola vez.\n\n" +
-                "Luego cierra esta app, entra a tu grupo de WhatsApp 'Radio Sync', " +
-                "envía cualquier canción y escribe en el chat:\n\n" +
-                "• !play (reproduce el último audio recibido)\n" +
-                "• !pausa (pausa en ambos teléfonos)\n" +
-                "• !ir 1:30 (salta al minuto 1:30)\n" +
-                "• !reiniciar (vuelve al inicio)"
-            textSize = 14f
+            text = "Comandos en WhatsApp:\n" +
+                "• !play (Reproducir)\n• !pausa (Pausar)\n" +
+                "• !reiniciar (Volver a 0)\n• !ir 1:30 (Saltar al minuto 1:30)"
+            textSize = 13f
             setTextColor(Color.parseColor("#94A3B8"))
-            setPadding(0, 0, 0, 32)
+            setPadding(0, 0, 0, 24)
         }
         root.addView(instructions)
 
         val btnStorage = Button(this).apply {
-            text = "1. Dar Permiso a Archivos de WhatsApp"
+            text = "1. Permiso Archivos WhatsApp"
             setOnClickListener { requestStorageAccess() }
         }
         root.addView(btnStorage)
 
         val btnAccess = Button(this).apply {
-            text = "2. Activar Lector de Chat (Accesibilidad)"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
+            text = "2. Activar Lector Chat (Accesibilidad)"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         }
         root.addView(btnAccess)
 
         val btnNotif = Button(this).apply {
-            text = "3. Activar Segundo Plano (Notificaciones)"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-            }
+            text = "3. Activar Notificaciones"
+            setOnClickListener { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }
         }
         root.addView(btnNotif)
 
         tvInfo = TextView(this).apply {
-            text = "Último audio detectado: ${MusicEngine.lastFileName}\n" +
-                "Último comando: ${MusicEngine.lastExecutedState}"
-            textSize = 15f
-            setTextColor(Color.parseColor("#38BDF8"))
-            setPadding(0, 48, 0, 0)
+            text = "Último comando ejecutado: ${MusicEngine.lastCommandText}"
+            textSize = 13f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            setPadding(0, 24, 0, 0)
         }
         root.addView(tvInfo)
 
         setContentView(root)
 
         MusicEngine.onUiUpdate = {
-            runOnUiThread {
-                tvInfo.text = "Último audio detectado: ${MusicEngine.lastFileName}\n" +
-                    "Último comando: ${MusicEngine.lastExecutedState}"
-            }
+            runOnUiThread { updateUIState() }
         }
+
+        startLoop()
+    }
+
+    private fun startLoop() {
+        handler.post(object : Runnable {
+            override fun run() {
+                MusicEngine.ensureLatestAudioLoaded(this@MainActivity, false)
+                val dur = MusicEngine.getDurationMs()
+                val cur = MusicEngine.getCurrentPositionMs()
+                seekBar.max = dur
+                seekBar.progress = cur
+                tvTrack.text = "🎵 ${MusicEngine.lastFileName}"
+                tvInfo.text = "Último comando ejecutado: ${MusicEngine.lastCommandText}"
+                handler.postDelayed(this, 500)
+            }
+        })
+    }
+
+    private fun updateUIState() {
+        tvTrack.text = "🎵 ${MusicEngine.lastFileName}"
+        tvInfo.text = "Último comando ejecutado: ${MusicEngine.lastCommandText}"
     }
 
     private fun requestStorageAccess() {
