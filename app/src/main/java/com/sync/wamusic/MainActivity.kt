@@ -277,10 +277,8 @@ class MainActivity : Activity() {
                 override fun onProgressChanged(s: SeekBar?, progress: Int, fromUser: Boolean) {}
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {
-                    if (fromUser) {
-                        val target = (s?.progress ?: 0)
-                        MusicEngine.manualSeek(target)
-                    }
+                    val target = s?.progress ?: 0
+                    MusicEngine.manualSeek(target)
                 }
             })
         }
